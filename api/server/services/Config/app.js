@@ -10,6 +10,7 @@ const db = require('~/models');
 const {
   GATEWAY_ENDPOINT_NAME,
   DEFAULT_MODEL_FALLBACKS,
+  getGatewayAllowedAddresses,
   isGatewayEndpointEnabled,
 } = require('~/server/services/GatewayConfigService');
 
@@ -51,6 +52,11 @@ function injectGatewayEndpoint(config) {
   }
 
   endpoints.custom = custom;
+  const allowedAddresses = [
+    ...(Array.isArray(endpoints.allowedAddresses) ? endpoints.allowedAddresses : []),
+    ...getGatewayAllowedAddresses(),
+  ];
+  endpoints.allowedAddresses = [...new Set(allowedAddresses)];
 
   return {
     ...config,

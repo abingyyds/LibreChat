@@ -1577,6 +1577,14 @@ describe('SSRF allowedAddresses exemption', () => {
       ).resolves.toBeUndefined();
     });
 
+    it('passes a Railway private gateway URL when its host and port are in allowedAddresses', async () => {
+      await expect(
+        validateEndpointURL('http://ai-gateway.railway.internal:800/v1', 'gateway', [
+          'ai-gateway.railway.internal:800',
+        ]),
+      ).resolves.toBeUndefined();
+    });
+
     it('passes a hostname URL when DNS resolves to an exempted IP', async () => {
       mockedLookup.mockResolvedValueOnce([{ address: '10.0.0.5', family: 4 }] as never);
       await expect(

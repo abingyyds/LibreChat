@@ -16,6 +16,31 @@ function gatewayBase(baseUrl) {
   return normalized.endsWith('/v1') ? normalized : `${normalized}/v1`;
 }
 
+function getEffectivePort(protocol, port) {
+  if (port) {
+    return port;
+  }
+  return protocol === 'https:' ? '443' : '80';
+}
+
+function toAllowedAddress(baseUrl) {
+  if (!baseUrl) {
+    return null;
+  }
+  try {
+    const url = new URL(gatewayBase(baseUrl));
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return null;
+    }
+    const host = url.hostname.includes(':')
+      ? `[${url.hostname.replace(/^\[|\]$/g, '')}]`
+      : url.hostname;
+    return `${host}:${getEffectivePort(url.protocol, url.port)}`;
+  } catch {
+    return null;
+  }
+}
+
 function parseProvider(value) {
   const provider = String(value || '').trim().toLowerCase();
   if (provider === SESSION_PROVIDER || provider === 'newapi') {
@@ -116,6 +141,24 @@ function getPublicGatewayBaseUrl(accountBaseUrl) {
   return baseUrl ? gatewayBase(baseUrl) : '';
 }
 
+function getGatewayAllowedAddresses() {
+  const addresses = new Set();
+  const add = (baseUrl) => {
+    const address = toAllowedAddress(baseUrl);
+    if (address) {
+      addresses.add(address);
+    }
+  };
+
+  for (const provider of getGatewayLoginProviders()) {
+    add(provider.baseUrl);
+  }
+  add(process.env.GATEWAY_PUBLIC_BASE_URL);
+  add(process.env.LIBRECHAT_GATEWAY_PUBLIC_BASE_URL);
+
+  return [...addresses];
+}
+
 function readGatewayFlag(name) {
   return process.env[name] ?? process.env[`LIBRECHAT_${name}`];
 }
@@ -156,6 +199,7 @@ module.exports = {
   apiBase,
   gatewayBase,
   getPublicGatewayBaseUrl,
+  getGatewayAllowedAddresses,
   getGatewayLoginProviders,
   isGatewayLoginEnabled,
   isGatewayEndpointEnabled,
