@@ -3,7 +3,55 @@ const { isEnabled, instrumentMongooseQueryMetrics } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 
 const mongoose = require('mongoose');
-const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI || process.env.MONGO_URL;
+const mongoEnv = (() => {
+  if (process.env.MONGO_URI) {
+    return { name: 'MONGO_URI', value: process.env.MONGO_URI };
+  }
+  if (process.env.MONGODB_URI) {
+    return { name: 'MONGODB_URI', value: process.env.MONGODB_URI };
+  }
+  if (process.env.MONGO_URL) {
+    return { name: 'MONGO_URL', value: process.env.MONGO_URL };
+  }
+  return { name: null, value: null };
+})();
+
+const normalizeMongoUri = (mongoUri) => {
+  if (!mongoUri) {
+    return mongoUri;
+  }
+
+  try {
+    const url = new URL(mongoUri);
+    if (!url.pathname || url.pathname === '/') {
+      url.pathname = '/LibreChat';
+    }
+    if ((url.username || url.password) && !url.searchParams.has('authSource')) {
+      url.searchParams.set('authSource', process.env.MONGO_AUTH_SOURCE || 'admin');
+    }
+    return url.toString();
+  } catch {
+    return mongoUri;
+  }
+};
+
+const redactMongoUri = (mongoUri) => {
+  if (!mongoUri) {
+    return '';
+  }
+
+  try {
+    const url = new URL(mongoUri);
+    if (url.password) {
+      url.password = '***';
+    }
+    return url.toString();
+  } catch {
+    return '<invalid MongoDB URI>';
+  }
+};
+
+const MONGO_URI = normalizeMongoUri(mongoEnv.value);
 
 instrumentMongooseQueryMetrics(mongoose);
 
@@ -70,10 +118,27 @@ async function connectDb() {
     };
     logger.info('Mongo Connection options');
     logger.info(JSON.stringify(opts, null, 2));
+    logger.info(
+      `[connectDb] MongoDB URI source: ${mongoEnv.name}; target: ${redactMongoUri(MONGO_URI)}`,
+    );
     mongoose.set('strictQuery', true);
-    cached.promise = mongoose.connect(MONGO_URI, opts).then((mongoose) => {
-      return mongoose;
-    });
+    cached.promise = mongoose
+      .connect(MONGO_URI, opts)
+      .then((mongoose) => {
+        return mongoose;
+      })
+      .catch((err) => {
+        logger.error(
+          `[connectDb] MongoDB connection failed: ${JSON.stringify({
+            message: err?.message,
+            code: err?.code,
+            codeName: err?.codeName,
+            errorLabels: err?.errorLabels,
+            target: redactMongoUri(MONGO_URI),
+          })}`,
+        );
+        throw err;
+      });
   }
   cached.conn = await cached.promise;
 
