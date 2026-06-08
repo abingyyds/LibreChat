@@ -1,11 +1,13 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { Constants, ContentTypes } from 'librechat-data-provider';
-import type { TMessageContentParts } from 'librechat-data-provider';
+import { Constants, ContentTypes, ToolCallTypes } from 'librechat-data-provider';
+import type { TMessageContentParts, TAttachment } from 'librechat-data-provider';
 import Part from '../Part';
 
 jest.mock('../Parts', () => ({
-  ImageGen: () => <div data-testid="image-gen" />,
+  ImageGen: ({ attachments }: { attachments?: TAttachment[] }) => (
+    <div data-testid="image-gen" data-attachment-count={attachments?.length ?? 0} />
+  ),
   ExecuteCode: () => <div data-testid="execute-code" />,
   AgentUpdate: () => <div data-testid="agent-update" />,
   EmptyText: () => <div data-testid="empty-text" />,
@@ -59,15 +61,34 @@ jest.mock('../ToolCall', () => ({
 
 jest.mock('../Image', () => ({
   __esModule: true,
-  default: () => <div data-testid="image" />,
+  default: ({ altText, imagePath }: { altText: string; imagePath: string }) => (
+    <div data-testid="image" data-alt={altText} data-src={imagePath} />
+  ),
 }));
 
 jest.mock('~/utils', () => ({
   getCachedPreview: jest.fn(),
 }));
 
-const renderPart = (part: TMessageContentParts) =>
-  render(<Part part={part} isSubmitting={false} showCursor={false} isCreatedByUser={false} />);
+jest.mock('~/hooks', () => ({
+  useLocalize: () => (key: string) => {
+    const translations: Record<string, string> = {
+      com_ui_generated_image: 'Generated image',
+    };
+    return translations[key] ?? key;
+  },
+}));
+
+const renderPart = (part: TMessageContentParts, attachments?: TAttachment[]) =>
+  render(
+    <Part
+      part={part}
+      attachments={attachments}
+      isSubmitting={false}
+      showCursor={false}
+      isCreatedByUser={false}
+    />,
+  );
 
 const toolCallPart = (name: string, args = '{"code":"echo hi"}'): TMessageContentParts =>
   ({
@@ -77,6 +98,21 @@ const toolCallPart = (name: string, args = '{"code":"echo hi"}'): TMessageConten
       name,
       args,
       output: 'hi',
+      progress: 1,
+    },
+  }) as unknown as TMessageContentParts;
+
+const legacyFunctionPart = (name: string): TMessageContentParts =>
+  ({
+    type: ContentTypes.TOOL_CALL,
+    [ContentTypes.TOOL_CALL]: {
+      id: 'call_1',
+      type: ToolCallTypes.FUNCTION,
+      function: {
+        name,
+        arguments: '{"prompt":"a cat"}',
+        output: '',
+      },
       progress: 1,
     },
   }) as unknown as TMessageContentParts;
@@ -130,5 +166,32 @@ describe('Part tool renderer selection', () => {
       'edit_file',
     );
     expect(screen.queryByTestId('tool-call')).not.toBeInTheDocument();
+  });
+
+  it('renders direct image_url content with the Image renderer', () => {
+    renderPart({
+      type: ContentTypes.IMAGE_URL,
+      image_url: { url: 'https://example.com/generated.png' },
+    } as TMessageContentParts);
+
+    expect(screen.getByTestId('image')).toHaveAttribute(
+      'data-src',
+      'https://example.com/generated.png',
+    );
+    expect(screen.getByTestId('image')).toHaveAttribute('data-alt', 'Generated image');
+  });
+
+  it('passes attachments to legacy image generation function calls', () => {
+    renderPart(legacyFunctionPart('dalle'), [
+      {
+        filename: 'cat.png',
+        filepath: '/images/cat.png',
+        conversationId: 'conv-1',
+        messageId: 'msg-1',
+        toolCallId: 'call_1',
+      } as TAttachment,
+    ]);
+
+    expect(screen.getByTestId('image-gen')).toHaveAttribute('data-attachment-count', '1');
   });
 });

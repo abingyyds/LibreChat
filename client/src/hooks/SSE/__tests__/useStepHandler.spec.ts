@@ -1182,6 +1182,48 @@ describe('useStepHandler', () => {
       );
     });
 
+    it('should preserve image_url payloads from message deltas', () => {
+      const responseMessage = createResponseMessage();
+      mockGetMessages.mockReturnValue([responseMessage]);
+
+      const { result } = renderHook(() => useStepHandler(createHookParams()));
+
+      const runStep = createRunStep();
+      const submission = createSubmission();
+
+      act(() => {
+        result.current.stepHandler({ event: StepEvents.ON_RUN_STEP, data: runStep }, submission);
+      });
+
+      const messageDelta: Agents.MessageDeltaEvent = {
+        id: 'step-1',
+        delta: {
+          content: [
+            {
+              type: ContentTypes.IMAGE_URL,
+              image_url: { url: 'https://example.com/generated.png', detail: 'high' },
+            },
+          ],
+        },
+      };
+
+      act(() => {
+        result.current.stepHandler(
+          { event: StepEvents.ON_MESSAGE_DELTA, data: messageDelta },
+          submission,
+        );
+      });
+
+      const lastCall = mockSetMessages.mock.calls[mockSetMessages.mock.calls.length - 1][0];
+      const responseMsg = lastCall[lastCall.length - 1];
+      expect(responseMsg.content).toContainEqual(
+        expect.objectContaining({
+          type: ContentTypes.IMAGE_URL,
+          image_url: { url: 'https://example.com/generated.png', detail: 'high' },
+        }),
+      );
+    });
+
     it('should return early when contentPart is null', () => {
       const responseMessage = createResponseMessage();
       mockGetMessages.mockReturnValue([responseMessage]);

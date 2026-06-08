@@ -32,8 +32,12 @@ type AttachmentFixture = TFile & TAttachmentMetadata;
 
 const wrapper = ({ children }: { children: ReactNode }) => <RecoilRoot>{children}</RecoilRoot>;
 
-const submission = {} as EventSubmission;
 const messageId = 'msg-1';
+const submission = {
+  initialResponse: {
+    messageId,
+  },
+} as EventSubmission;
 
 function makeAttachment(overrides: Partial<AttachmentFixture>): AttachmentFixture {
   return {
@@ -163,6 +167,42 @@ describe('useAttachmentHandler upsert-by-file_id', () => {
       filename: 'phase1-name.xlsx',
       status: 'ready',
       text: 'final',
+    });
+  });
+
+  it('normalizes OpenAI-style attachment field names before storing', () => {
+    const ctx = setup();
+    ctx.handle({
+      file_id: 'fid-image',
+      filename: 'image.png',
+      url: 'https://example.com/image.png',
+      message_id: messageId,
+      tool_call_id: 'call-image',
+      conversationId: 'conv-1',
+    } as unknown as TAttachment);
+
+    expect(ctx.list).toHaveLength(1);
+    expect(ctx.list[0]).toMatchObject({
+      file_id: 'fid-image',
+      filepath: 'https://example.com/image.png',
+      messageId,
+      toolCallId: 'call-image',
+    });
+  });
+
+  it('falls back to the submission response message id when attachment message id is omitted', () => {
+    const ctx = setup();
+    ctx.handle({
+      filename: 'image.png',
+      filepath: '/images/image.png',
+      tool_call_id: 'call-image',
+      conversationId: 'conv-1',
+    } as unknown as TAttachment);
+
+    expect(ctx.list).toHaveLength(1);
+    expect(ctx.list[0]).toMatchObject({
+      messageId,
+      toolCallId: 'call-image',
     });
   });
 

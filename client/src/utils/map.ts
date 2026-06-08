@@ -9,7 +9,9 @@ export function mapAttachments(attachments: Array<t.TAttachment | null | undefin
     if (attachment === null || attachment === undefined) {
       continue;
     }
-    const key = attachment.toolCallId || '';
+    const key =
+      attachment.toolCallId ||
+      ((attachment as t.TAttachment & { tool_call_id?: string }).tool_call_id ?? '');
     if (key.length === 0) {
       continue;
     }

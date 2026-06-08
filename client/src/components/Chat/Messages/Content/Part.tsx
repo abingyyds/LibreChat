@@ -32,6 +32,7 @@ import WebSearch from './WebSearch';
 import ToolCall from './ToolCall';
 import Image from './Image';
 import { isBashProgrammaticToolCall } from './routing';
+import { useLocalize } from '~/hooks';
 
 type PartProps = {
   part?: TMessageContentParts;
@@ -44,6 +45,17 @@ type PartProps = {
   onToolExpand?: () => void;
 };
 
+const getImageUrl = (imageUrl: unknown): string | undefined => {
+  if (typeof imageUrl === 'string') {
+    return imageUrl;
+  }
+  if (imageUrl && typeof imageUrl === 'object' && 'url' in imageUrl) {
+    const { url } = imageUrl as { url?: unknown };
+    return typeof url === 'string' ? url : undefined;
+  }
+  return undefined;
+};
+
 const Part = memo(function Part({
   part,
   isSubmitting,
@@ -54,6 +66,8 @@ const Part = memo(function Part({
   hideAttachments,
   onToolExpand,
 }: PartProps) {
+  const localize = useLocalize();
+
   if (!part) {
     return null;
   }
@@ -329,6 +343,8 @@ const Part = memo(function Part({
           isSubmitting={isSubmitting}
           toolName={toolCall.function.name}
           output={toolCall.function.output ?? ''}
+          attachments={attachments}
+          hideAttachments={hideAttachments}
         />
       );
     } else if (toolCall.type === ToolCallTypes.FUNCTION && ToolCallTypes.FUNCTION in toolCall) {
@@ -367,6 +383,12 @@ const Part = memo(function Part({
         height={imageFile.height}
       />
     );
+  } else if (part.type === ContentTypes.IMAGE_URL) {
+    const imagePath = getImageUrl(part[ContentTypes.IMAGE_URL]);
+    if (!imagePath) {
+      return null;
+    }
+    return <Image imagePath={imagePath} altText={localize('com_ui_generated_image')} />;
   }
 
   return null;

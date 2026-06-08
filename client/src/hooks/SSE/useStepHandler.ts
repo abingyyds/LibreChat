@@ -54,6 +54,8 @@ type MessageDeltaUpdate = { type: ContentTypes.TEXT; text: string; tool_call_ids
 
 type ReasoningDeltaUpdate = { type: ContentTypes.THINK; think: string };
 
+type ImageUrlDeltaUpdate = Agents.MessageContentImageUrl;
+
 type AllContentTypes =
   | ContentTypes.TEXT
   | ContentTypes.THINK
@@ -359,12 +361,12 @@ export default function useStepHandler({
 
       updatedContent[index] = update;
     } else if (contentType === ContentTypes.IMAGE_URL && 'image_url' in contentPart) {
-      const currentContent = updatedContent[index] as {
-        type: ContentTypes.IMAGE_URL;
-        image_url: string;
-      };
+      const currentContent = updatedContent[index] as ImageUrlDeltaUpdate | undefined;
+      const incoming = contentPart as ImageUrlDeltaUpdate;
       updatedContent[index] = {
         ...currentContent,
+        ...incoming,
+        type: ContentTypes.IMAGE_URL,
       };
     } else if (contentType === ContentTypes.SUMMARY) {
       const currentSummary = updatedContent[index] as SummaryContentPart | undefined;

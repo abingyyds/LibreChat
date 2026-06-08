@@ -10,14 +10,30 @@ import type {
 import { handleMemoryArtifact } from '~/utils/memory';
 import store from '~/store';
 
+type AttachmentEventData = TAttachment & {
+  message_id?: string;
+  tool_call_id?: string;
+  url?: string;
+};
+
+function normalizeAttachment(data: AttachmentEventData, submission: EventSubmission): TAttachment {
+  return {
+    ...data,
+    messageId: data.messageId || data.message_id || submission.initialResponse?.messageId || '',
+    toolCallId: data.toolCallId || data.tool_call_id || '',
+    ...(data.filepath || data.url ? { filepath: data.filepath || data.url } : {}),
+  } as TAttachment;
+}
+
 export default function useAttachmentHandler(queryClient?: QueryClient) {
   const setAttachmentsMap = useSetRecoilState(store.messageAttachmentsMap);
 
-  return ({ data }: { data: TAttachment; submission: EventSubmission }) => {
-    const { messageId } = data;
-    const fileId = (data as Partial<TFile>).file_id;
+  return ({ data, submission }: { data: AttachmentEventData; submission: EventSubmission }) => {
+    const attachment = normalizeAttachment(data, submission);
+    const { messageId } = attachment;
+    const fileId = (attachment as Partial<TFile>).file_id;
 
-    const fileData = data as TFile;
+    const fileData = attachment as TFile;
     if (
       queryClient &&
       fileData?.file_id &&
@@ -38,8 +54,8 @@ export default function useAttachmentHandler(queryClient?: QueryClient) {
       });
     }
 
-    if (queryClient && data.type === Tools.memory && data[Tools.memory]) {
-      const memoryArtifact = data[Tools.memory];
+    if (queryClient && attachment.type === Tools.memory && attachment[Tools.memory]) {
+      const memoryArtifact = attachment[Tools.memory];
 
       queryClient.setQueryData([QueryKeys.memories], (oldData: MemoriesResponse | undefined) => {
         if (!oldData) {
@@ -85,8 +101,8 @@ export default function useAttachmentHandler(queryClient?: QueryClient) {
         );
         if (existingIndex > -1) {
           const existing = messageAttachments[existingIndex] as Partial<TFile>;
-          const incoming = data as Partial<TFile>;
-          const next = { ...existing, ...data } as TAttachment;
+          const incoming = attachment as Partial<TFile>;
+          const next = { ...existing, ...attachment } as TAttachment;
           /* Don't let a phase-1 replay (finalHandler iterates
            * `responseMessage.attachments`, which is the immediate-persist
            * snapshot at status:pending) regress a record a deferred
@@ -108,7 +124,7 @@ export default function useAttachmentHandler(queryClient?: QueryClient) {
       }
       return {
         ...prevMap,
-        [messageId]: [...messageAttachments, data],
+        [messageId]: [...messageAttachments, attachment],
       };
     });
   };
