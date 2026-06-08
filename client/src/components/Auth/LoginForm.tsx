@@ -28,7 +28,11 @@ const LoginForm: React.FC<TLoginFormProps> = ({ onSubmit, startupConfig, error, 
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
 
   const { data: config } = useGetStartupConfig();
-  const useUsernameLogin = config?.ldap?.username;
+  const useUsernameLogin =
+    startupConfig?.ldap?.username ||
+    startupConfig?.gatewayLoginEnabled ||
+    config?.ldap?.username ||
+    config?.gatewayLoginEnabled;
   const validTheme = isDark(theme) ? 'dark' : 'light';
   const requireCaptcha = Boolean(startupConfig.turnstile?.siteKey);
   const authInputClassName =
@@ -129,7 +133,7 @@ const LoginForm: React.FC<TLoginFormProps> = ({ onSubmit, startupConfig, error, 
               {...register('password', {
                 required: localize('com_auth_password_required'),
                 minLength: {
-                  value: startupConfig?.minPasswordLength || 8,
+                  value: useUsernameLogin ? 1 : startupConfig?.minPasswordLength || 8,
                   message: localize('com_auth_password_min_length'),
                 },
                 maxLength: { value: 128, message: localize('com_auth_password_max_length') },

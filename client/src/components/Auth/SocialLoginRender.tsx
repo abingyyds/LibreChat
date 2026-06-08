@@ -24,6 +24,7 @@ function SocialLoginRender({
   if (!startupConfig) {
     return null;
   }
+  const hasPasswordLogin = startupConfig.emailLoginEnabled || startupConfig.gatewayLoginEnabled;
 
   const providerComponents = {
     discord: startupConfig.discordLoginEnabled && (
@@ -120,7 +121,7 @@ function SocialLoginRender({
   return (
     startupConfig.socialLoginEnabled && (
       <>
-        {startupConfig.emailLoginEnabled && (
+        {hasPasswordLogin && (
           <>
             <div className="relative mt-6 flex w-full items-center justify-center border border-t border-gray-300 uppercase dark:border-gray-600">
               <div className="absolute bg-white px-3 text-xs text-black dark:bg-gray-900 dark:text-white">

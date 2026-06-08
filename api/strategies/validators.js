@@ -1,6 +1,8 @@
 const { z } = require('zod');
+const { isGatewayLoginEnabled } = require('~/server/services/GatewayConfigService');
 
 const MIN_PASSWORD_LENGTH = parseInt(process.env.MIN_PASSWORD_LENGTH, 10) || 8;
+const emailSchema = z.string().email();
 
 const allowedCharactersRegex = new RegExp(
   '^[' +
@@ -31,10 +33,16 @@ const usernameSchema = z
   });
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: z
+    .string()
+    .min(1)
+    .max(120)
+    .refine((value) => isGatewayLoginEnabled() || emailSchema.safeParse(value).success, {
+      message: 'Invalid email',
+    }),
   password: z
     .string()
-    .min(MIN_PASSWORD_LENGTH)
+    .min(isGatewayLoginEnabled() ? 1 : MIN_PASSWORD_LENGTH)
     .max(128)
     .refine((value) => value.trim().length > 0, {
       message: 'Password cannot be only spaces',

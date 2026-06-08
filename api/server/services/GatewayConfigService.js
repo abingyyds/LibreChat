@@ -1,0 +1,162 @@
+const GATEWAY_ENDPOINT_NAME = process.env.GATEWAY_ENDPOINT_NAME || 'AI Gateway';
+const SESSION_PROVIDER = 'gateway';
+const TOKEN_PROVIDER = 'gateway-v1';
+const DEFAULT_MODEL_FALLBACKS = ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'];
+
+function normalizeBaseUrl(baseUrl) {
+  return String(baseUrl || '').trim().replace(/\/+$/, '');
+}
+
+function apiBase(baseUrl) {
+  return normalizeBaseUrl(baseUrl).replace(/\/v1$/, '');
+}
+
+function gatewayBase(baseUrl) {
+  const normalized = normalizeBaseUrl(baseUrl);
+  return normalized.endsWith('/v1') ? normalized : `${normalized}/v1`;
+}
+
+function parseProvider(value) {
+  const provider = String(value || '').trim().toLowerCase();
+  if (provider === SESSION_PROVIDER || provider === 'newapi') {
+    return SESSION_PROVIDER;
+  }
+  if (provider === TOKEN_PROVIDER || provider === 'gateway_v1' || provider === 'v1') {
+    return TOKEN_PROVIDER;
+  }
+  return undefined;
+}
+
+function normalizeProviders(rows) {
+  const seen = new Set();
+  const providers = [];
+  for (const row of rows || []) {
+    const provider = parseProvider(row?.provider);
+    const baseUrl = normalizeBaseUrl(row?.baseUrl);
+    if (!provider || !baseUrl) {
+      continue;
+    }
+    const key = `${provider}:${baseUrl}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    providers.push({ provider, baseUrl });
+  }
+  return providers;
+}
+
+function parseProviderList(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return [];
+  }
+  const raw = value.trim();
+  try {
+    const parsed = JSON.parse(raw);
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    return normalizeProviders(rows);
+  } catch {
+    // Compact syntax is supported below: gateway=https://a;gateway-v1=https://b
+  }
+
+  return normalizeProviders(
+    raw.split(/[,\n;]/).flatMap((entry) => {
+      const text = entry.trim();
+      if (!text) {
+        return [];
+      }
+      const matched = text.match(/^(gateway|gateway-v1|gateway_v1|newapi|v1)\s*=\s*(.+)$/i);
+      if (matched) {
+        return [{ provider: matched[1].toLowerCase(), baseUrl: matched[2].trim() }];
+      }
+      if (/^https?:\/\//i.test(text)) {
+        return [
+          { provider: SESSION_PROVIDER, baseUrl: text },
+          { provider: TOKEN_PROVIDER, baseUrl: text },
+        ];
+      }
+      return [];
+    }),
+  );
+}
+
+function getGatewayLoginProviders() {
+  const providers = [
+    ...parseProviderList(process.env.GATEWAY_LOGIN_PROVIDERS),
+    ...parseProviderList(process.env.LIBRECHAT_GATEWAY_LOGIN_PROVIDERS),
+  ];
+
+  const sharedBaseUrl = process.env.GATEWAY_BASE_URL || process.env.LIBRECHAT_GATEWAY_BASE_URL;
+  if (sharedBaseUrl) {
+    providers.push(
+      { provider: SESSION_PROVIDER, baseUrl: sharedBaseUrl },
+      { provider: TOKEN_PROVIDER, baseUrl: sharedBaseUrl },
+    );
+  }
+
+  providers.push(
+    {
+      provider: SESSION_PROVIDER,
+      baseUrl: process.env.GATEWAY_SESSION_BASE_URL,
+    },
+    {
+      provider: TOKEN_PROVIDER,
+      baseUrl: process.env.GATEWAY_TOKEN_BASE_URL,
+    },
+  );
+
+  return normalizeProviders(providers);
+}
+
+function getPublicGatewayBaseUrl(accountBaseUrl) {
+  const baseUrl =
+    process.env.GATEWAY_PUBLIC_BASE_URL ||
+    process.env.LIBRECHAT_GATEWAY_PUBLIC_BASE_URL ||
+    accountBaseUrl;
+  return baseUrl ? gatewayBase(baseUrl) : '';
+}
+
+function readGatewayFlag(name) {
+  return process.env[name] ?? process.env[`LIBRECHAT_${name}`];
+}
+
+function parseBooleanFlag(value) {
+  if (value == null || value === '') {
+    return undefined;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) {
+    return true;
+  }
+  if (['false', '0', 'no', 'n', 'off'].includes(normalized)) {
+    return false;
+  }
+  return undefined;
+}
+
+function isGatewayLoginEnabled() {
+  const enabled = parseBooleanFlag(readGatewayFlag('GATEWAY_LOGIN_ENABLED'));
+  return enabled !== false && getGatewayLoginProviders().length > 0;
+}
+
+function isGatewayEndpointEnabled() {
+  const enabled = parseBooleanFlag(readGatewayFlag('GATEWAY_ENDPOINT_ENABLED'));
+  if (enabled !== undefined) {
+    return enabled;
+  }
+  return getGatewayLoginProviders().length > 0;
+}
+
+module.exports = {
+  GATEWAY_ENDPOINT_NAME,
+  SESSION_PROVIDER,
+  TOKEN_PROVIDER,
+  DEFAULT_MODEL_FALLBACKS,
+  normalizeBaseUrl,
+  apiBase,
+  gatewayBase,
+  getPublicGatewayBaseUrl,
+  getGatewayLoginProviders,
+  isGatewayLoginEnabled,
+  isGatewayEndpointEnabled,
+};

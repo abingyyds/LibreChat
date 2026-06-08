@@ -161,3 +161,36 @@ test('displays validation error messages', async () => {
   expect(getByText(/You must enter a valid email address/i)).toBeInTheDocument();
   expect(getByText(/Password must be at least 8 characters/i)).toBeInTheDocument();
 });
+
+test('accepts username and short password when gateway login is enabled', async () => {
+  const gatewayLogin = jest.fn();
+  const gatewayStartupConfig = {
+    ...mockStartupConfig,
+    emailLoginEnabled: false,
+    gatewayLoginEnabled: true,
+  };
+  setup({
+    useGetStartupConfigReturnValue: {
+      isLoading: false,
+      isError: false,
+      data: gatewayStartupConfig,
+    },
+  });
+  const { getByLabelText } = render(
+    <Login
+      onSubmit={gatewayLogin}
+      startupConfig={gatewayStartupConfig}
+      error={undefined}
+      setError={jest.fn()}
+    />,
+  );
+  const emailInput = getByLabelText(/email/i);
+  const passwordInput = getByLabelText(/password/i);
+  const submitButton = getByTestId(document.body, 'login-button');
+
+  await userEvent.type(emailInput, 'branch-user');
+  await userEvent.type(passwordInput, 'p');
+  await userEvent.click(submitButton);
+
+  expect(gatewayLogin).toHaveBeenCalledWith({ email: 'branch-user', password: 'p' });
+});

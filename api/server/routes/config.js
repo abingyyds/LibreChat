@@ -13,6 +13,7 @@ const { hasCapability } = require('~/server/middleware/roles/capabilities');
 const { getLdapConfig } = require('~/server/services/Config/ldap');
 const { getRumConfig } = require('~/server/services/Config/rum');
 const { getAppConfig } = require('~/server/services/Config/app');
+const { isGatewayLoginEnabled } = require('~/server/services/GatewayConfigService');
 
 const router = express.Router();
 const emailLoginEnabled =
@@ -83,6 +84,7 @@ function buildPreLoginPayload() {
     samlImageUrl: process.env.SAML_IMAGE_URL,
     serverDomain: process.env.DOMAIN_SERVER || 'http://localhost:3080',
     emailLoginEnabled,
+    gatewayLoginEnabled: isGatewayLoginEnabled(),
     registrationEnabled: !ldap?.enabled && isEnabled(process.env.ALLOW_REGISTRATION),
     socialLoginEnabled: isEnabled(process.env.ALLOW_SOCIAL_LOGIN),
     emailEnabled:

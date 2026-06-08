@@ -101,7 +101,7 @@ function Login() {
   return (
     <>
       {error != null && <ErrorMessage>{localize(getLoginError(error))}</ErrorMessage>}
-      {startupConfig?.emailLoginEnabled === true && (
+      {(startupConfig?.emailLoginEnabled === true || startupConfig?.gatewayLoginEnabled === true) && (
         <LoginForm
           onSubmit={login}
           startupConfig={startupConfig}

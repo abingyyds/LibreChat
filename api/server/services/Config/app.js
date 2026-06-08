@@ -7,10 +7,60 @@ const loadCustomConfig = require('./loadCustomConfig');
 const getLogStores = require('~/cache/getLogStores');
 const paths = require('~/config/paths');
 const db = require('~/models');
+const {
+  GATEWAY_ENDPOINT_NAME,
+  DEFAULT_MODEL_FALLBACKS,
+  isGatewayEndpointEnabled,
+} = require('~/server/services/GatewayConfigService');
+
+function injectGatewayEndpoint(config) {
+  if (!isGatewayEndpointEnabled()) {
+    return config;
+  }
+
+  const gatewayEndpoint = {
+    name: GATEWAY_ENDPOINT_NAME,
+    apiKey: 'user_provided',
+    baseURL: 'user_provided',
+    models: {
+      fetch: true,
+      default: (process.env.GATEWAY_DEFAULT_MODELS || DEFAULT_MODEL_FALLBACKS.join(','))
+        .split(',')
+        .map((model) => model.trim())
+        .filter(Boolean),
+    },
+    titleConvo: true,
+    titleModel: process.env.GATEWAY_TITLE_MODEL || 'gpt-4o-mini',
+    modelDisplayLabel: process.env.GATEWAY_MODEL_DISPLAY_LABEL || 'Gateway',
+  };
+
+  const endpoints = { ...(config.endpoints || {}) };
+  const custom = Array.isArray(endpoints.custom) ? [...endpoints.custom] : [];
+  const existing = custom.findIndex((endpoint) => endpoint?.name === GATEWAY_ENDPOINT_NAME);
+
+  if (existing >= 0) {
+    custom[existing] = {
+      ...gatewayEndpoint,
+      ...custom[existing],
+      apiKey: custom[existing].apiKey || gatewayEndpoint.apiKey,
+      baseURL: custom[existing].baseURL || gatewayEndpoint.baseURL,
+      models: custom[existing].models || gatewayEndpoint.models,
+    };
+  } else {
+    custom.unshift(gatewayEndpoint);
+  }
+
+  endpoints.custom = custom;
+
+  return {
+    ...config,
+    endpoints,
+  };
+}
 
 const loadBaseConfig = async () => {
   /** @type {TCustomConfig} */
-  const config = (await loadCustomConfig()) ?? {};
+  const config = injectGatewayEndpoint((await loadCustomConfig()) ?? {});
   /** @type {Record<string, FunctionTool>} */
   const systemTools = loadAndFormatTools({
     adminFilter: config.filteredTools,

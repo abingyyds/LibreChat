@@ -11,7 +11,12 @@ import Login from '~/components/Auth/Login';
 
 jest.mock('librechat-data-provider/react-query');
 
-const mockStartupConfig = {
+const mockStartupConfig: {
+  isFetching: boolean;
+  isLoading: boolean;
+  isError: boolean;
+  data: TStartupConfig;
+} = {
   isFetching: false,
   isLoading: false,
   isError: false,
@@ -22,8 +27,10 @@ const mockStartupConfig = {
     githubLoginEnabled: true,
     googleLoginEnabled: true,
     openidLoginEnabled: true,
+    appleLoginEnabled: false,
     openidLabel: 'Test OpenID',
     openidImageUrl: 'http://test-server.com',
+    openidAutoRedirect: false,
     samlLoginEnabled: true,
     samlLabel: 'Test SAML',
     samlImageUrl: 'http://test-server.com',
@@ -33,7 +40,15 @@ const mockStartupConfig = {
     registrationEnabled: true,
     emailLoginEnabled: true,
     socialLoginEnabled: true,
+    passwordResetEnabled: true,
     serverDomain: 'mock-server',
+    appTitle: '',
+    emailEnabled: false,
+    showBirthdayIcon: false,
+    helpAndFaqURL: '',
+    sharedLinksEnabled: true,
+    publicSharedLinksEnabled: true,
+    allowAccountDeletion: true,
   },
 };
 
@@ -151,6 +166,25 @@ test('renders login form', () => {
     'href',
     'mock-server/oauth/saml',
   );
+});
+
+test('renders login form when gateway login is enabled without email login', () => {
+  const { getByLabelText } = setup({
+    useGetStartupConfigReturnValue: {
+      ...mockStartupConfig,
+      data: {
+        ...mockStartupConfig.data,
+        emailLoginEnabled: false,
+        gatewayLoginEnabled: true,
+        socialLoginEnabled: false,
+        registrationEnabled: false,
+      },
+    },
+  });
+
+  expect(getByLabelText(/email/i)).toBeInTheDocument();
+  expect(getByLabelText(/password/i)).toBeInTheDocument();
+  expect(getByTestId(document.body, 'login-button')).toBeInTheDocument();
 });
 
 test('calls loginUser.mutate on login', async () => {
