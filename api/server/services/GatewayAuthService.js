@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const { logger, getTenantId } = require('@librechat/data-schemas');
 const { getBalanceConfig } = require('@librechat/api');
 const { SystemRoles } = require('librechat-data-provider');
-const { findUser, createUser, updateUserKey, countUsers } = require('~/models');
+const { findUser, createUser, updateUser, updateUserKey } = require('~/models');
 const {
   GATEWAY_ENDPOINT_NAME,
   SESSION_PROVIDER,
@@ -309,7 +309,6 @@ async function ensureLocalUser(account, password) {
 
   if (!user) {
     const salt = bcrypt.genSaltSync(10);
-    const isFirstRegisteredUser = (await countUsers()) === 0;
     user = await createUser(
       {
         provider: 'gateway',
@@ -317,7 +316,7 @@ async function ensureLocalUser(account, password) {
         username,
         name: account.displayName || account.username || email,
         avatar: null,
-        role: isFirstRegisteredUser ? SystemRoles.ADMIN : SystemRoles.USER,
+        role: SystemRoles.USER,
         password: bcrypt.hashSync(password, salt),
         emailVerified: true,
         openidIssuer: issuer,
@@ -327,6 +326,8 @@ async function ensureLocalUser(account, password) {
       true,
       true,
     );
+  } else if (user.provider === 'gateway' && user.role !== SystemRoles.USER) {
+    user = await updateUser(user._id.toString(), { role: SystemRoles.USER });
   }
 
   return user;
