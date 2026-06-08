@@ -3,12 +3,12 @@ const { isEnabled, instrumentMongooseQueryMetrics } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 
 const mongoose = require('mongoose');
-const MONGO_URI = process.env.MONGO_URI;
+const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI || process.env.MONGO_URL;
 
 instrumentMongooseQueryMetrics(mongoose);
 
 if (!MONGO_URI) {
-  throw new Error('Please define the MONGO_URI environment variable');
+  throw new Error('Please define the MONGO_URI, MONGODB_URI, or MONGO_URL environment variable');
 }
 /** The maximum number of connections in the connection pool. */
 const maxPoolSize = parseInt(process.env.MONGO_MAX_POOL_SIZE) || undefined;
