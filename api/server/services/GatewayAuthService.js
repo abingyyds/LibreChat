@@ -9,10 +9,12 @@ const {
   GATEWAY_ENDPOINT_NAME,
   SESSION_PROVIDER,
   TOKEN_PROVIDER,
+  SITE_PROVIDER,
   DEFAULT_MODEL_FALLBACKS,
   apiBase,
   gatewayBase,
   normalizeBaseUrl,
+  normalizeSiteHost,
   getPublicGatewayBaseUrl,
   getGatewayLoginProviders,
   isGatewayLoginEnabled,
@@ -63,6 +65,38 @@ function extractKey(data) {
   };
 }
 
+function extractDistributor(data) {
+  const body = data?.data || data || {};
+  const distributor = body.distributor || body.site || {};
+  const distributorId =
+    body.distributor_id ?? body.distributorId ?? distributor.id ?? distributor.distributor_id;
+  const belongs =
+    body.belongs_to_distributor ??
+    body.belongsToDistributor ??
+    body.belongs ??
+    Number(distributorId || 0) > 0;
+  return {
+    belongs: Boolean(belongs),
+    id: distributorId != null ? String(distributorId) : undefined,
+    name: distributor.name,
+    slug: distributor.slug,
+    status: distributor.status,
+    siteHost: normalizeSiteHost(
+      body.site_host ||
+        body.siteHost ||
+        body.api_host ||
+        body.apiHost ||
+        body.host ||
+        distributor.site_host ||
+        distributor.siteHost ||
+        distributor.api_host ||
+        distributor.apiHost ||
+        distributor.host ||
+        distributor.domain,
+    ),
+  };
+}
+
 function getErrorMessage(err) {
   if (axios.isAxiosError(err)) {
     const data = err.response?.data;
@@ -82,6 +116,11 @@ function buildSyntheticEmail({ provider, baseUrl, externalUserId, username, emai
     .digest('hex')
     .slice(0, 24);
   return `${hash}@gateway.local`;
+}
+
+function normalizeGatewayKey(value) {
+  const key = String(value || '').trim();
+  return key ? `sk-${key.replace(/^sk-/, '')}` : '';
 }
 
 function buildUsername(value) {
@@ -111,9 +150,37 @@ async function loginGatewaySession({ baseUrl, username, password, timeoutMs }) {
     throw new Error('Gateway login succeeded but no session was returned');
   }
   const user = extractUser(res.data);
-  return {
+  const account = {
     provider: SESSION_PROVIDER,
     baseUrl: normalizeBaseUrl(baseUrl),
+    externalUserId: user.id != null ? String(user.id) : undefined,
+    username: user.username || username,
+    email: user.email,
+    displayName: user.display_name || user.displayName || user.username || username,
+    sessionCookie: cookie,
+  };
+
+  return attachGatewaySite(account, timeoutMs).catch((err) => {
+    logger.debug(`[GatewayAuth] Failed to read gateway site ownership: ${getErrorMessage(err)}`);
+    return account;
+  });
+}
+
+async function loginGatewaySite({ baseUrl, siteHost, username, password, timeoutMs }) {
+  const client = getAxios(baseUrl, gatewaySiteHostHeaders({ siteHost }), timeoutMs);
+  const res = await client.post('/api/dist/user/login', { username, password });
+  if (res.data?.success === false) {
+    throw new Error(res.data?.message || 'Gateway site login failed');
+  }
+  const cookie = buildCookie(res.headers['set-cookie']);
+  if (!cookie) {
+    throw new Error('Gateway site login succeeded but no session was returned');
+  }
+  const user = extractUser(res.data);
+  return {
+    provider: SITE_PROVIDER,
+    baseUrl: normalizeBaseUrl(baseUrl),
+    siteHost: normalizeSiteHost(siteHost),
     externalUserId: user.id != null ? String(user.id) : undefined,
     username: user.username || username,
     email: user.email,
@@ -147,11 +214,104 @@ async function loginGatewayToken({ baseUrl, username, password, timeoutMs }) {
 }
 
 function gatewayAIHeaders(account) {
-  const headers = { Cookie: account.sessionCookie || '' };
+  const headers = { ...gatewaySiteHostHeaders(account), Cookie: account.sessionCookie || '' };
   if (account.externalUserId) {
     headers['New-Api-User'] = String(account.externalUserId);
   }
   return headers;
+}
+
+function gatewaySiteHostHeaders(account) {
+  const siteHost = normalizeSiteHost(account?.siteHost);
+  if (!siteHost) {
+    return {};
+  }
+  return {
+    'X-Original-Host': siteHost,
+    'X-Forwarded-Host': siteHost,
+  };
+}
+
+function resolveMappedSiteHost(site) {
+  const raw = process.env.GATEWAY_SITE_HOST_MAP || process.env.LIBRECHAT_GATEWAY_SITE_HOST_MAP || '';
+  if (!raw.trim()) {
+    return '';
+  }
+  const keys = new Set(
+    [site?.id, site?.slug, site?.name]
+      .map((value) => String(value || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+  for (const entry of raw.split(/[,\n;]/)) {
+    const matched = entry.match(/^\s*([^=]+?)\s*=\s*(.+?)\s*$/);
+    if (!matched || !keys.has(matched[1].trim().toLowerCase())) {
+      continue;
+    }
+    const host = normalizeSiteHost(matched[2]);
+    if (host) {
+      return host;
+    }
+  }
+  return '';
+}
+
+function resolveTemplateSiteHost(site) {
+  const template =
+    process.env.GATEWAY_SITE_HOST_TEMPLATE || process.env.LIBRECHAT_GATEWAY_SITE_HOST_TEMPLATE || '';
+  if (!template.trim()) {
+    return '';
+  }
+  const host = template
+    .replace(/\{id\}/g, site?.id || '')
+    .replace(/\{slug\}/g, site?.slug || '')
+    .replace(/\{name\}/g, site?.name || '');
+  return normalizeSiteHost(host);
+}
+
+function resolveSuffixSiteHost(site) {
+  const suffix =
+    process.env.GATEWAY_SITE_HOST_SUFFIX || process.env.LIBRECHAT_GATEWAY_SITE_HOST_SUFFIX || '';
+  const slug = String(site?.slug || '').trim();
+  if (!suffix.trim() || !slug) {
+    return '';
+  }
+  return normalizeSiteHost(`${slug}.${suffix.replace(/^\.+/, '')}`);
+}
+
+function resolveGatewaySiteHost(site, provider = {}) {
+  return (
+    normalizeSiteHost(provider.siteHost) ||
+    normalizeSiteHost(site?.siteHost) ||
+    resolveMappedSiteHost(site) ||
+    resolveTemplateSiteHost(site) ||
+    resolveSuffixSiteHost(site)
+  );
+}
+
+async function fetchGatewaySelfDistributor(account, timeoutMs) {
+  const client = getAxios(account.baseUrl, gatewayAIHeaders(account), timeoutMs);
+  const res = await client.get('/api/user/self/distributor');
+  if (res.data?.success === false) {
+    throw new Error(res.data?.message || 'Failed to read gateway site ownership');
+  }
+  return extractDistributor(res.data);
+}
+
+async function attachGatewaySite(account, timeoutMs) {
+  if (!account.sessionCookie || !account.externalUserId) {
+    return account;
+  }
+  const site = await fetchGatewaySelfDistributor(account, timeoutMs);
+  if (!site.belongs) {
+    return account;
+  }
+  return {
+    ...account,
+    provider: SITE_PROVIDER,
+    legacyProvider: account.provider,
+    site,
+    siteHost: resolveGatewaySiteHost(site, account),
+  };
 }
 
 async function listGatewayAIKeys(account) {
@@ -169,7 +329,7 @@ async function ensureGatewayAIKey(account) {
   );
   if (existing?.key) {
     return {
-      key: `sk-${String(existing.key).replace(/^sk-/, '')}`,
+      key: normalizeGatewayKey(existing.key),
       id: existing.id != null ? String(existing.id) : undefined,
     };
   }
@@ -193,8 +353,58 @@ async function ensureGatewayAIKey(account) {
     throw new Error('Gateway key was created but could not be read back');
   }
   return {
-    key: `sk-${String(created.key).replace(/^sk-/, '')}`,
+    key: normalizeGatewayKey(created.key),
     id: created.id != null ? String(created.id) : undefined,
+  };
+}
+
+async function listGatewaySiteKeys(account) {
+  const client = getAxios(account.baseUrl, gatewayAIHeaders(account));
+  const res = await client.get('/api/dist/token/list');
+  if (res.data?.success === false) {
+    throw new Error(res.data?.message || 'Failed to list gateway site keys');
+  }
+  return extractItems(res.data);
+}
+
+async function ensureGatewaySiteKey(account) {
+  const existing = (await listGatewaySiteKeys(account)).find(
+    (item) => String(item.name || '').startsWith(AUTO_KEY_PREFIX) && item.key,
+  );
+  if (existing?.key) {
+    return {
+      key: normalizeGatewayKey(existing.key),
+      id: existing.id != null ? String(existing.id) : undefined,
+    };
+  }
+
+  const name = `${AUTO_KEY_PREFIX}-${Date.now()}`;
+  const body = { name };
+  const keyGroupId = Number(process.env.GATEWAY_SITE_KEY_GROUP_ID || 0);
+  if (Number.isInteger(keyGroupId) && keyGroupId > 0) {
+    body.key_group_id = keyGroupId;
+  }
+  const client = getAxios(account.baseUrl, gatewayAIHeaders(account));
+  const res = await client.post('/api/dist/token/create', body);
+  if (res.data?.success === false) {
+    throw new Error(res.data?.message || 'Failed to create gateway site key');
+  }
+
+  const created = extractKey(res.data);
+  if (created.key) {
+    return {
+      key: normalizeGatewayKey(created.key),
+      id: created.id,
+    };
+  }
+
+  const listed = (await listGatewaySiteKeys(account)).find((item) => item.name === name && item.key);
+  if (!listed?.key) {
+    throw new Error('Gateway site key was created but could not be read back');
+  }
+  return {
+    key: normalizeGatewayKey(listed.key),
+    id: listed.id != null ? String(listed.id) : undefined,
   };
 }
 
@@ -259,31 +469,70 @@ function pickDefaultModels(models) {
 
 async function authenticateWithProvider(provider, username, password) {
   const params = { ...provider, username, password, timeoutMs: 10000 };
-  return provider.provider === SESSION_PROVIDER
-    ? loginGatewaySession(params)
-    : loginGatewayToken(params);
+  if (provider.provider === SITE_PROVIDER) {
+    return loginGatewaySite(params);
+  }
+  if (provider.provider === SESSION_PROVIDER) {
+    return loginGatewaySession(params);
+  }
+  return loginGatewayToken(params);
+}
+
+async function ensureGatewayKey(account) {
+  if (account.provider === SITE_PROVIDER) {
+    return ensureGatewaySiteKey(account);
+  }
+  if (account.provider === SESSION_PROVIDER) {
+    return ensureGatewayAIKey(account);
+  }
+  return ensureGatewayTokenKey(account);
+}
+
+async function authenticateGatewayAccount(username, password) {
+  let lastLoginError;
+  let lastAccountError;
+  const providers = getGatewayLoginProviders();
+  for (const provider of providers) {
+    let login;
+    try {
+      login = await authenticateWithProvider(provider, username, password);
+    } catch (err) {
+      lastLoginError = err;
+      continue;
+    }
+
+    try {
+      const key = await ensureGatewayKey(login);
+      return {
+        ...login,
+        apiKey: key.key,
+        apiKeyId: key.id,
+      };
+    } catch (err) {
+      lastAccountError = err;
+      logger.debug(`[GatewayAuth] External key setup failed: ${getErrorMessage(err)}`);
+    }
+  }
+
+  if (lastAccountError) {
+    throw lastAccountError;
+  }
+  if (lastLoginError) {
+    logger.debug(`[GatewayAuth] External login failed: ${getErrorMessage(lastLoginError)}`);
+  }
+  return null;
 }
 
 async function authenticateGatewayUser(username, password) {
-  let lastError;
-  const providers = getGatewayLoginProviders();
-  for (const provider of providers) {
-    try {
-      return await authenticateWithProvider(provider, username, password);
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  if (lastError) {
-    logger.debug(`[GatewayAuth] External login failed: ${getErrorMessage(lastError)}`);
-  }
-  return null;
+  return authenticateGatewayAccount(username, password);
 }
 
 async function ensureLocalUser(account, password) {
   const tenantId = getTenantId();
   const externalId = account.externalUserId || account.email || account.username;
-  const issuer = `gateway:${account.provider}:${account.baseUrl}`;
+  const issuer = ['gateway', account.provider, account.baseUrl, account.siteHost]
+    .filter(Boolean)
+    .join(':');
   const email = buildSyntheticEmail({
     provider: account.provider,
     baseUrl: account.baseUrl,
@@ -292,13 +541,27 @@ async function ensureLocalUser(account, password) {
     email: account.email,
     tenantId,
   });
-  const lookup = {
+  const lookups = [{
     provider: 'gateway',
     openidIssuer: issuer,
     idOnTheSource: String(externalId || email),
-  };
+  }];
 
-  let user = await findUser(lookup);
+  if (account.legacyProvider) {
+    lookups.push({
+      provider: 'gateway',
+      openidIssuer: ['gateway', account.legacyProvider, account.baseUrl].filter(Boolean).join(':'),
+      idOnTheSource: String(externalId || email),
+    });
+  }
+
+  let user = null;
+  for (const lookup of lookups) {
+    user = await findUser(lookup);
+    if (user) {
+      break;
+    }
+  }
   if (!user) {
     user = await findUser({ email });
   }
@@ -354,12 +617,6 @@ async function loginWithGateway(username, password) {
 
   const localUser = await ensureLocalUser(login, password);
   const account = { ...login, userId: localUser._id?.toString?.() || localUser.id };
-  const key =
-    account.provider === SESSION_PROVIDER
-      ? await ensureGatewayAIKey(account)
-      : await ensureGatewayTokenKey(account);
-  account.apiKey = key.key;
-  account.apiKeyId = key.id;
 
   const models = pickDefaultModels(
     await fetchGatewayModels(account).catch((err) => {
@@ -375,6 +632,9 @@ async function loginWithGateway(username, password) {
     username: account.username,
     email: account.email,
     displayName: account.displayName,
+    site: account.site
+      ? { id: account.site.id, name: account.site.name, slug: account.site.slug }
+      : undefined,
     modelCount: models.length,
   };
 

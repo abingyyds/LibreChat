@@ -47,6 +47,11 @@ describe('GatewayAuthService', () => {
       ...env,
       GATEWAY_LOGIN_ENABLED: 'true',
       GATEWAY_BASE_URL: 'http://gateway.internal:800',
+      GATEWAY_SITE_HOST: '',
+      GATEWAY_SITE_HOSTS: '',
+      GATEWAY_SITE_HOST_SUFFIX: '',
+      GATEWAY_SITE_HOST_TEMPLATE: '',
+      GATEWAY_SITE_HOST_MAP: '',
     };
   });
 
@@ -69,6 +74,18 @@ describe('GatewayAuthService', () => {
         throw new Error(`unexpected POST ${path}`);
       }),
       get: jest.fn(async (path) => {
+        if (path === '/api/user/self/distributor') {
+          return {
+            data: {
+              success: true,
+              data: {
+                belongs_to_distributor: false,
+                distributor_id: 0,
+                distributor: null,
+              },
+            },
+          };
+        }
         if (path === '/api/token/') {
           return {
             data: {
@@ -128,5 +145,127 @@ describe('GatewayAuthService', () => {
     expect(createUser).not.toHaveBeenCalled();
     expect(updateUser).toHaveBeenCalledWith('local-user-id', { role: 'USER' });
     expect(updateUserKey).toHaveBeenCalledWith(expect.objectContaining({ userId: 'local-user-id' }));
+  });
+
+  it('uses the site key API when a session login belongs to a site', async () => {
+    process.env.GATEWAY_SITE_HOST_SUFFIX = 'sites.example.com';
+    const client = {
+      post: jest.fn(async (path, body) => {
+        if (path === '/api/user/login') {
+          return {
+            headers: { 'set-cookie': ['session=site; Path=/'] },
+            data: { success: true, data: { id: 456, username: 'branch-user' } },
+          };
+        }
+        if (path === '/api/dist/token/create') {
+          return {
+            data: { success: true, data: { id: 9, name: body.name, key: 'site-key-raw' } },
+          };
+        }
+        throw new Error(`unexpected POST ${path}`);
+      }),
+      get: jest.fn(async (path) => {
+        if (path === '/api/user/self/distributor') {
+          return {
+            data: {
+              success: true,
+              data: {
+                belongs_to_distributor: true,
+                distributor_id: 7,
+                distributor: { id: 7, name: 'Alpha', slug: 'alpha', status: 1 },
+              },
+            },
+          };
+        }
+        if (path === '/api/dist/token/list') {
+          return { data: { success: true, data: [] } };
+        }
+        throw new Error(`unexpected GET ${path}`);
+      }),
+    };
+    axios.create.mockReturnValue(client);
+    axios.get.mockResolvedValue({ data: { data: [{ id: 'gpt-4o-mini' }] } });
+    findUser.mockResolvedValue(null);
+    createUser.mockResolvedValue({
+      _id: { toString: () => 'local-site-user-id' },
+      provider: 'gateway',
+      role: 'USER',
+    });
+
+    const { loginWithGateway } = require('./GatewayAuthService');
+    await loginWithGateway('branch-user', 'password');
+
+    expect(client.post).toHaveBeenCalledWith('/api/dist/token/create', {
+      name: expect.stringMatching(/^librechat-auto-/),
+    });
+    expect(axios.create.mock.calls).toEqual(
+      expect.arrayContaining([
+        [
+          expect.objectContaining({
+            headers: expect.objectContaining({
+              'X-Original-Host': 'alpha.sites.example.com',
+              'X-Forwarded-Host': 'alpha.sites.example.com',
+              'New-Api-User': '456',
+            }),
+          }),
+        ],
+      ]),
+    );
+    expect(updateUserKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'local-site-user-id',
+        value: expect.stringContaining('sk-site-key-raw'),
+      }),
+    );
+  });
+
+  it('supports direct site username/password login providers', async () => {
+    process.env.GATEWAY_BASE_URL = '';
+    process.env.GATEWAY_LOGIN_PROVIDERS = 'gateway-site=http://gateway.internal:800|host=alpha.example.com';
+    const client = {
+      post: jest.fn(async (path) => {
+        if (path === '/api/dist/user/login') {
+          return {
+            headers: { 'set-cookie': ['session=direct-site; Path=/'] },
+            data: { success: true, data: { id: 789, username: 'direct-site-user' } },
+          };
+        }
+        throw new Error(`unexpected POST ${path}`);
+      }),
+      get: jest.fn(async (path) => {
+        if (path === '/api/dist/token/list') {
+          return {
+            data: {
+              success: true,
+              data: [{ id: 11, name: 'librechat-auto-existing', key: 'existing-site-key' }],
+            },
+          };
+        }
+        throw new Error(`unexpected GET ${path}`);
+      }),
+    };
+    axios.create.mockReturnValue(client);
+    axios.get.mockResolvedValue({ data: { data: [{ id: 'gpt-4o-mini' }] } });
+    findUser.mockResolvedValue(null);
+    createUser.mockResolvedValue({
+      _id: { toString: () => 'direct-site-local-user-id' },
+      provider: 'gateway',
+      role: 'USER',
+    });
+
+    const { loginWithGateway } = require('./GatewayAuthService');
+    await loginWithGateway('direct-site-user', 'password');
+
+    expect(client.post).toHaveBeenCalledWith('/api/dist/user/login', {
+      username: 'direct-site-user',
+      password: 'password',
+    });
+    expect(client.post).not.toHaveBeenCalledWith('/api/user/login', expect.anything());
+    expect(updateUserKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'direct-site-local-user-id',
+        value: expect.stringContaining('sk-existing-site-key'),
+      }),
+    );
   });
 });
