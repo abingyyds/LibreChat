@@ -148,7 +148,6 @@ describe('GatewayAuthService', () => {
   });
 
   it('uses the site key API when a session login belongs to a site', async () => {
-    process.env.GATEWAY_SITE_HOST_SUFFIX = 'sites.example.com';
     const client = {
       post: jest.fn(async (path, body) => {
         if (path === '/api/user/login') {
@@ -157,7 +156,7 @@ describe('GatewayAuthService', () => {
             data: { success: true, data: { id: 456, username: 'branch-user' } },
           };
         }
-        if (path === '/api/dist/token/create') {
+        if (path === '/api/user/self/distributor/token/create') {
           return {
             data: { success: true, data: { id: 9, name: body.name, key: 'site-key-raw' } },
           };
@@ -177,7 +176,7 @@ describe('GatewayAuthService', () => {
             },
           };
         }
-        if (path === '/api/dist/token/list') {
+        if (path === '/api/user/self/distributor/token/list') {
           return { data: { success: true, data: [] } };
         }
         throw new Error(`unexpected GET ${path}`);
@@ -195,21 +194,11 @@ describe('GatewayAuthService', () => {
     const { loginWithGateway } = require('./GatewayAuthService');
     await loginWithGateway('branch-user', 'password');
 
-    expect(client.post).toHaveBeenCalledWith('/api/dist/token/create', {
+    expect(client.post).toHaveBeenCalledWith('/api/user/self/distributor/token/create', {
       name: expect.stringMatching(/^librechat-auto-/),
     });
-    expect(axios.create.mock.calls).toEqual(
-      expect.arrayContaining([
-        [
-          expect.objectContaining({
-            headers: expect.objectContaining({
-              'X-Original-Host': 'alpha.sites.example.com',
-              'X-Forwarded-Host': 'alpha.sites.example.com',
-              'New-Api-User': '456',
-            }),
-          }),
-        ],
-      ]),
+    expect(axios.create.mock.calls.some(([config]) => config.headers?.['X-Original-Host'])).toBe(
+      false,
     );
     expect(updateUserKey).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -233,7 +222,7 @@ describe('GatewayAuthService', () => {
         throw new Error(`unexpected POST ${path}`);
       }),
       get: jest.fn(async (path) => {
-        if (path === '/api/dist/token/list') {
+        if (path === '/api/user/self/distributor/token/list') {
           return {
             data: {
               success: true,
@@ -261,6 +250,7 @@ describe('GatewayAuthService', () => {
       password: 'password',
     });
     expect(client.post).not.toHaveBeenCalledWith('/api/user/login', expect.anything());
+    expect(client.get).not.toHaveBeenCalledWith('/api/dist/token/list');
     expect(updateUserKey).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 'direct-site-local-user-id',

@@ -221,6 +221,14 @@ function gatewayAIHeaders(account) {
   return headers;
 }
 
+function gatewayUserHeaders(account) {
+  const headers = { Cookie: account.sessionCookie || '' };
+  if (account.externalUserId) {
+    headers['New-Api-User'] = String(account.externalUserId);
+  }
+  return headers;
+}
+
 function gatewaySiteHostHeaders(account) {
   const siteHost = normalizeSiteHost(account?.siteHost);
   if (!siteHost) {
@@ -359,8 +367,8 @@ async function ensureGatewayAIKey(account) {
 }
 
 async function listGatewaySiteKeys(account) {
-  const client = getAxios(account.baseUrl, gatewayAIHeaders(account));
-  const res = await client.get('/api/dist/token/list');
+  const client = getAxios(account.baseUrl, gatewayUserHeaders(account));
+  const res = await client.get('/api/user/self/distributor/token/list');
   if (res.data?.success === false) {
     throw new Error(res.data?.message || 'Failed to list gateway site keys');
   }
@@ -384,8 +392,8 @@ async function ensureGatewaySiteKey(account) {
   if (Number.isInteger(keyGroupId) && keyGroupId > 0) {
     body.key_group_id = keyGroupId;
   }
-  const client = getAxios(account.baseUrl, gatewayAIHeaders(account));
-  const res = await client.post('/api/dist/token/create', body);
+  const client = getAxios(account.baseUrl, gatewayUserHeaders(account));
+  const res = await client.post('/api/user/self/distributor/token/create', body);
   if (res.data?.success === false) {
     throw new Error(res.data?.message || 'Failed to create gateway site key');
   }
