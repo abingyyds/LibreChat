@@ -148,6 +148,7 @@ describe('GatewayAuthService', () => {
   });
 
   it('uses the site key API when a session login belongs to a site', async () => {
+    process.env.GATEWAY_SITE_HOST_TEMPLATE = '{slug}.example.com';
     const client = {
       post: jest.fn(async (path, body) => {
         if (path === '/api/user/login') {
@@ -179,6 +180,14 @@ describe('GatewayAuthService', () => {
         if (path === '/api/user/self/distributor/token/list') {
           return { data: { success: true, data: [] } };
         }
+        if (path === '/api/dist/site/models') {
+          return {
+            data: {
+              success: true,
+              data: [{ model_name: 'site-model-b' }, { model_name: 'site-model-a' }],
+            },
+          };
+        }
         throw new Error(`unexpected GET ${path}`);
       }),
     };
@@ -192,13 +201,22 @@ describe('GatewayAuthService', () => {
     });
 
     const { loginWithGateway } = require('./GatewayAuthService');
-    await loginWithGateway('branch-user', 'password');
+    const gatewayUser = await loginWithGateway('branch-user', 'password');
 
     expect(client.post).toHaveBeenCalledWith('/api/user/self/distributor/token/create', {
       name: expect.stringMatching(/^librechat-auto-/),
     });
-    expect(axios.create.mock.calls.some(([config]) => config.headers?.['X-Original-Host'])).toBe(
-      false,
+    expect(axios.create.mock.calls).toEqual(
+      expect.arrayContaining([
+        [
+          expect.objectContaining({
+            headers: expect.objectContaining({
+              'X-Original-Host': 'alpha.example.com',
+              'X-Forwarded-Host': 'alpha.example.com',
+            }),
+          }),
+        ],
+      ]),
     );
     expect(updateUserKey).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -206,6 +224,18 @@ describe('GatewayAuthService', () => {
         value: expect.stringContaining('sk-site-key-raw'),
       }),
     );
+    const keyValue = JSON.parse(updateUserKey.mock.calls[0][0].value);
+    expect(keyValue).toEqual(
+      expect.objectContaining({
+        apiKey: 'sk-site-key-raw',
+        baseURL: 'http://gateway.internal:800/v1',
+        gatewayProvider: 'gateway-site',
+        gatewayBaseURL: 'http://gateway.internal:800',
+        gatewaySiteHost: 'alpha.example.com',
+      }),
+    );
+    expect(axios.get).not.toHaveBeenCalled();
+    expect(gatewayUser.gatewayAuth.modelCount).toBe(2);
   });
 
   it('supports direct site username/password login providers', async () => {

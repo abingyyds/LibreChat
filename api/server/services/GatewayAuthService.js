@@ -136,6 +136,9 @@ function buildEndpointKeyValue(account) {
   return JSON.stringify({
     apiKey: account.apiKey,
     baseURL: getPublicGatewayBaseUrl(account.baseUrl),
+    gatewayProvider: account.provider,
+    gatewayBaseURL: account.baseUrl,
+    gatewaySiteHost: account.siteHost,
   });
 }
 
@@ -463,6 +466,21 @@ function normalizeModels(rows) {
 async function fetchGatewayModels(account) {
   if (!account.apiKey) {
     return [];
+  }
+  if (account.provider === SITE_PROVIDER && account.siteHost) {
+    try {
+      const client = getAxios(account.baseUrl, gatewaySiteHostHeaders(account));
+      const res = await client.get('/api/dist/site/models');
+      if (res.data?.success === false) {
+        throw new Error(res.data?.message || 'Failed to fetch gateway site models');
+      }
+      const siteModels = normalizeModels(extractItems(res.data));
+      if (siteModels.length > 0) {
+        return siteModels;
+      }
+    } catch (err) {
+      logger.debug(`[GatewayAuth] Failed to fetch gateway site models: ${getErrorMessage(err)}`);
+    }
   }
   const res = await axios.get(`${gatewayBase(account.baseUrl)}/models`, {
     timeout: 30000,

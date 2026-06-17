@@ -1,7 +1,12 @@
 const { fetchModels } = require('@librechat/api');
+const axios = require('axios');
 const loadConfigModels = require('./loadConfigModels');
 const { getAppConfig } = require('./app');
 
+jest.mock('axios', () => ({
+  create: jest.fn(() => ({ defaults: {} })),
+  get: jest.fn(),
+}));
 jest.mock('@librechat/api', () => ({
   ...jest.requireActual('@librechat/api'),
   fetchModels: jest.fn(),
@@ -77,6 +82,7 @@ describe('loadConfigModels', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     fetchModels.mockReset();
+    axios.get.mockReset();
     require('~/models').getUserKeyValues.mockReset();
     process.env = { ...originalEnv };
 
@@ -538,6 +544,48 @@ describe('loadConfigModels', () => {
         }),
       );
       expect(result.KeyOnly).toEqual(['model-from-fixed-base']);
+    });
+
+    it('fetches SubRouter site models for stored gateway site users', async () => {
+      process.env.GATEWAY_BASE_URL = 'http://gateway.internal:800';
+      const { getUserKeyValues } = require('~/models');
+      getUserKeyValues.mockResolvedValueOnce({
+        apiKey: 'sk-site-key',
+        baseURL: 'https://public-gateway.example.com/v1',
+        gatewayProvider: 'gateway-site',
+        gatewayBaseURL: 'http://gateway.internal:800',
+        gatewaySiteHost: 'alpha.example.com',
+      });
+      getAppConfig.mockResolvedValue({
+        endpoints: {
+          custom: [
+            {
+              name: 'AI Gateway',
+              apiKey: 'user_provided',
+              baseURL: 'user_provided',
+              models: { fetch: true, default: ['fallback-model'] },
+            },
+          ],
+        },
+      });
+      axios.get.mockResolvedValueOnce({
+        data: {
+          success: true,
+          data: [{ model_name: 'site-model-b' }, { model_name: 'site-model-a' }],
+        },
+      });
+
+      const result = await loadConfigModels(mockRequest);
+
+      expect(axios.get).toHaveBeenCalledWith('http://gateway.internal:800/api/dist/site/models', {
+        timeout: 30000,
+        headers: {
+          'X-Original-Host': 'alpha.example.com',
+          'X-Forwarded-Host': 'alpha.example.com',
+        },
+      });
+      expect(fetchModels).not.toHaveBeenCalled();
+      expect(result['AI Gateway']).toEqual(['site-model-a', 'site-model-b']);
     });
   });
 

@@ -46,6 +46,10 @@ export interface FetchModelsParams {
   userObject?: Partial<IUser>;
   /** Skip MODEL_QUERIES cache (e.g., for user-provided keys) */
   skipCache?: boolean;
+  /** Gateway provider metadata for server-side model fetch overrides */
+  gatewayProvider?: string;
+  gatewayBaseURL?: string;
+  gatewaySiteHost?: string;
 }
 
 /**

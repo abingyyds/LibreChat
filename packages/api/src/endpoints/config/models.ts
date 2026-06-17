@@ -188,6 +188,9 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
               direct: endpoint.directEndpoint,
               userIdQuery: models.userIdQuery,
               skipCache: true,
+              gatewayProvider: userKeyValues?.gatewayProvider,
+              gatewayBaseURL: userKeyValues?.gatewayBaseURL,
+              gatewaySiteHost: userKeyValues?.gatewaySiteHost,
             });
           uniqueKeyToEndpointsMap[userFetchKey] = uniqueKeyToEndpointsMap[userFetchKey] || [];
           uniqueKeyToEndpointsMap[userFetchKey].push(name);
