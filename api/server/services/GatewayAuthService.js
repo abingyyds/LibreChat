@@ -335,8 +335,13 @@ async function listGatewayAIKeys(account) {
 }
 
 async function ensureGatewayAIKey(account) {
+  const tokenGroup = process.env.GATEWAY_TOKEN_GROUP || 'subrouter';
   const existing = (await listGatewayAIKeys(account)).find(
-    (item) => String(item.name || '').startsWith(AUTO_KEY_PREFIX) && item.key,
+    (item) =>
+      String(item.name || '').startsWith(AUTO_KEY_PREFIX) &&
+      item.key &&
+      (!item.group || item.group === tokenGroup) &&
+      (tokenGroup !== 'subrouter' || item.include_official_channels !== false),
   );
   if (existing?.key) {
     return {
@@ -349,11 +354,13 @@ async function ensureGatewayAIKey(account) {
   const client = getAxios(account.baseUrl, gatewayAIHeaders(account));
   const res = await client.post('/api/token/', {
     name,
-    group: process.env.GATEWAY_TOKEN_GROUP || 'default',
+    group: tokenGroup,
     expired_time: -1,
     remain_quota: 0,
     unlimited_quota: true,
     model_limits_enabled: false,
+    include_official_channels: tokenGroup === 'subrouter',
+    official_key_max_discount: 0,
   });
   if (res.data?.success === false) {
     throw new Error(res.data?.message || 'Failed to create gateway key');
@@ -380,7 +387,10 @@ async function listGatewaySiteKeys(account) {
 
 async function ensureGatewaySiteKey(account) {
   const existing = (await listGatewaySiteKeys(account)).find(
-    (item) => String(item.name || '').startsWith(AUTO_KEY_PREFIX) && item.key,
+    (item) =>
+      String(item.name || '').startsWith(AUTO_KEY_PREFIX) &&
+      item.key &&
+      item.include_official_channels !== false,
   );
   if (existing?.key) {
     return {
@@ -390,7 +400,11 @@ async function ensureGatewaySiteKey(account) {
   }
 
   const name = `${AUTO_KEY_PREFIX}-${Date.now()}`;
-  const body = { name };
+  const body = {
+    name,
+    include_official_channels: true,
+    official_key_max_discount: 0,
+  };
   const keyGroupId = Number(process.env.GATEWAY_SITE_KEY_GROUP_ID || 0);
   if (Number.isInteger(keyGroupId) && keyGroupId > 0) {
     body.key_group_id = keyGroupId;
@@ -409,7 +423,9 @@ async function ensureGatewaySiteKey(account) {
     };
   }
 
-  const listed = (await listGatewaySiteKeys(account)).find((item) => item.name === name && item.key);
+  const listed = (await listGatewaySiteKeys(account)).find(
+    (item) => item.name === name && item.key,
+  );
   if (!listed?.key) {
     throw new Error('Gateway site key was created but could not be read back');
   }
@@ -466,21 +482,6 @@ function normalizeModels(rows) {
 async function fetchGatewayModels(account) {
   if (!account.apiKey) {
     return [];
-  }
-  if (account.provider === SITE_PROVIDER && account.siteHost) {
-    try {
-      const client = getAxios(account.baseUrl, gatewaySiteHostHeaders(account));
-      const res = await client.get('/api/dist/site/models');
-      if (res.data?.success === false) {
-        throw new Error(res.data?.message || 'Failed to fetch gateway site models');
-      }
-      const siteModels = normalizeModels(extractItems(res.data));
-      if (siteModels.length > 0) {
-        return siteModels;
-      }
-    } catch (err) {
-      logger.debug(`[GatewayAuth] Failed to fetch gateway site models: ${getErrorMessage(err)}`);
-    }
   }
   const res = await axios.get(`${gatewayBase(account.baseUrl)}/models`, {
     timeout: 30000,

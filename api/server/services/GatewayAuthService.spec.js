@@ -90,7 +90,15 @@ describe('GatewayAuthService', () => {
           return {
             data: {
               success: true,
-              data: [{ id: 1, name: 'librechat-auto-existing', key: 'abc123' }],
+              data: [
+                {
+                  id: 1,
+                  name: 'librechat-auto-existing',
+                  key: 'abc123',
+                  group: 'subrouter',
+                  include_official_channels: true,
+                },
+              ],
             },
           };
         }
@@ -145,6 +153,85 @@ describe('GatewayAuthService', () => {
     expect(createUser).not.toHaveBeenCalled();
     expect(updateUser).toHaveBeenCalledWith('local-user-id', { role: 'USER' });
     expect(updateUserKey).toHaveBeenCalledWith(expect.objectContaining({ userId: 'local-user-id' }));
+  });
+
+  it('replaces an auto key that cannot route official models', async () => {
+    let tokenListCalls = 0;
+    let createdTokenName = '';
+    const client = {
+      post: jest.fn(async (path, body) => {
+        if (path === '/api/user/login') {
+          return {
+            headers: { 'set-cookie': ['session=abc; Path=/'] },
+            data: { success: true, data: { id: 123, username: 'alice' } },
+          };
+        }
+        if (path === '/api/token/') {
+          createdTokenName = body.name;
+          return { data: { success: true } };
+        }
+        throw new Error(`unexpected POST ${path}`);
+      }),
+      get: jest.fn(async (path) => {
+        if (path === '/api/user/self/distributor') {
+          return {
+            data: { success: true, data: { belongs_to_distributor: false } },
+          };
+        }
+        if (path === '/api/token/') {
+          tokenListCalls++;
+          return {
+            data: {
+              success: true,
+              data:
+                tokenListCalls === 1
+                  ? [
+                      {
+                        id: 1,
+                        name: 'librechat-auto-old',
+                        key: 'old-key',
+                        group: 'default',
+                        include_official_channels: false,
+                      },
+                    ]
+                  : [
+                      {
+                        id: 2,
+                        name: createdTokenName,
+                        key: 'new-key',
+                        group: 'subrouter',
+                        include_official_channels: true,
+                      },
+                    ],
+            },
+          };
+        }
+        throw new Error(`unexpected GET ${path}`);
+      }),
+    };
+    axios.create.mockReturnValue(client);
+    axios.get.mockResolvedValue({ data: { data: [{ id: 'official-only-model' }] } });
+    findUser.mockResolvedValue(null);
+    createUser.mockResolvedValue({
+      _id: { toString: () => 'local-user-id' },
+      provider: 'gateway',
+      role: 'USER',
+    });
+
+    const { loginWithGateway } = require('./GatewayAuthService');
+    await loginWithGateway('alice', 'password');
+
+    expect(client.post).toHaveBeenCalledWith(
+      '/api/token/',
+      expect.objectContaining({
+        group: 'subrouter',
+        include_official_channels: true,
+        official_key_max_discount: 0,
+      }),
+    );
+    expect(updateUserKey).toHaveBeenCalledWith(
+      expect.objectContaining({ value: expect.stringContaining('sk-new-key') }),
+    );
   });
 
   it('uses the site key API when a session login belongs to a site', async () => {
@@ -205,19 +292,9 @@ describe('GatewayAuthService', () => {
 
     expect(client.post).toHaveBeenCalledWith('/api/user/self/distributor/token/create', {
       name: expect.stringMatching(/^librechat-auto-/),
+      include_official_channels: true,
+      official_key_max_discount: 0,
     });
-    expect(axios.create.mock.calls).toEqual(
-      expect.arrayContaining([
-        [
-          expect.objectContaining({
-            headers: expect.objectContaining({
-              'X-Original-Host': 'alpha.example.com',
-              'X-Forwarded-Host': 'alpha.example.com',
-            }),
-          }),
-        ],
-      ]),
-    );
     expect(updateUserKey).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 'local-site-user-id',
@@ -234,8 +311,13 @@ describe('GatewayAuthService', () => {
         gatewaySiteHost: 'alpha.example.com',
       }),
     );
-    expect(axios.get).not.toHaveBeenCalled();
-    expect(gatewayUser.gatewayAuth.modelCount).toBe(2);
+    expect(axios.get).toHaveBeenCalledWith(
+      'http://gateway.internal:800/v1/models',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer sk-site-key-raw' },
+      }),
+    );
+    expect(gatewayUser.gatewayAuth.modelCount).toBe(1);
   });
 
   it('supports direct site username/password login providers', async () => {
