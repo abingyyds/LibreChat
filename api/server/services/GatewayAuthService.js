@@ -34,6 +34,35 @@ function buildCookie(headers) {
     .join('; ');
 }
 
+function mergeCookies(...values) {
+  const cookies = new Map();
+  for (const value of values) {
+    for (const part of String(value || '').split(';')) {
+      const separator = part.indexOf('=');
+      if (separator <= 0) {
+        continue;
+      }
+      cookies.set(part.slice(0, separator).trim(), part.slice(separator + 1).trim());
+    }
+  }
+  return [...cookies].map(([name, value]) => `${name}=${value}`).join('; ');
+}
+
+function requiresTwoFactor(data) {
+  return Boolean(
+    data?.require_2fa ??
+      data?.require2fa ??
+      data?.data?.require_2fa ??
+      data?.data?.require2fa,
+  );
+}
+
+function gatewayError(message, code) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
 function getAxios(baseUrl, headers = {}, timeout = 30000) {
   return axios.create({
     baseURL: apiBase(baseUrl),
@@ -142,17 +171,70 @@ function buildEndpointKeyValue(account) {
   });
 }
 
-async function loginGatewaySession({ baseUrl, username, password, timeoutMs }) {
+async function loginGatewaySession({
+  baseUrl,
+  username,
+  password,
+  timeoutMs,
+  turnstileToken,
+  twoFactorCode,
+}) {
   const client = getAxios(baseUrl, {}, timeoutMs);
-  const res = await client.post('/api/user/login', { username, password });
-  if (res.data?.success === false) {
-    throw new Error(res.data?.message || 'Gateway login failed');
+  let res;
+  try {
+    res = await client.post(
+      '/api/user/login',
+      { username, password },
+      turnstileToken ? { params: { turnstile: turnstileToken } } : undefined,
+    );
+  } catch (err) {
+    throw gatewayError(getErrorMessage(err), 'GATEWAY_LOGIN_FAILED');
   }
-  const cookie = buildCookie(res.headers['set-cookie']);
+  if (res.data?.success === false) {
+    throw gatewayError(res.data?.message || 'Gateway login failed', 'GATEWAY_LOGIN_FAILED');
+  }
+  let data = res.data;
+  let user = extractUser(data);
+  let cookie = buildCookie(res.headers['set-cookie']);
+  if (requiresTwoFactor(data)) {
+    if (!twoFactorCode) {
+      throw gatewayError(
+        'This SubRouter account requires a two-factor authentication code',
+        'GATEWAY_TWO_FACTOR_REQUIRED',
+      );
+    }
+    if (!cookie) {
+      throw gatewayError(
+        'The SubRouter two-factor session expired. Please sign in again',
+        'GATEWAY_TWO_FACTOR_SESSION_EXPIRED',
+      );
+    }
+    let verification;
+    try {
+      verification = await client.post(
+        '/api/user/login/2fa',
+        { code: twoFactorCode },
+        { headers: { Cookie: cookie } },
+      );
+    } catch (err) {
+      throw gatewayError(getErrorMessage(err), 'GATEWAY_TWO_FACTOR_INVALID');
+    }
+    if (verification.data?.success === false) {
+      throw gatewayError(
+        verification.data?.message || 'Invalid SubRouter two-factor authentication code',
+        'GATEWAY_TWO_FACTOR_INVALID',
+      );
+    }
+    cookie = mergeCookies(cookie, buildCookie(verification.headers['set-cookie']));
+    data = verification.data;
+    const verifiedUser = extractUser(data);
+    if (verifiedUser.id != null || verifiedUser.username || verifiedUser.email) {
+      user = verifiedUser;
+    }
+  }
   if (!cookie) {
     throw new Error('Gateway login succeeded but no session was returned');
   }
-  const user = extractUser(res.data);
   const account = {
     provider: SESSION_PROVIDER,
     baseUrl: normalizeBaseUrl(baseUrl),
@@ -169,17 +251,68 @@ async function loginGatewaySession({ baseUrl, username, password, timeoutMs }) {
   });
 }
 
-async function loginGatewaySite({ baseUrl, siteHost, username, password, timeoutMs }) {
+async function loginGatewaySite({
+  baseUrl,
+  siteHost,
+  username,
+  password,
+  timeoutMs,
+  turnstileToken,
+  twoFactorCode,
+}) {
   const client = getAxios(baseUrl, gatewaySiteHostHeaders({ siteHost }), timeoutMs);
-  const res = await client.post('/api/dist/user/login', { username, password });
+  const res = turnstileToken
+    ? await client.post(
+        '/api/dist/user/login',
+        { username, password },
+        { params: { turnstile: turnstileToken } },
+      )
+    : await client.post('/api/dist/user/login', { username, password });
   if (res.data?.success === false) {
     throw new Error(res.data?.message || 'Gateway site login failed');
   }
-  const cookie = buildCookie(res.headers['set-cookie']);
+  let data = res.data;
+  let cookie = buildCookie(res.headers['set-cookie']);
+  let user = extractUser(data);
+  if (requiresTwoFactor(data)) {
+    if (!twoFactorCode) {
+      throw gatewayError(
+        'This SubRouter account requires a two-factor authentication code',
+        'GATEWAY_TWO_FACTOR_REQUIRED',
+      );
+    }
+    if (!cookie) {
+      throw gatewayError(
+        'The SubRouter two-factor session expired. Please sign in again',
+        'GATEWAY_TWO_FACTOR_SESSION_EXPIRED',
+      );
+    }
+    let verification;
+    try {
+      verification = await client.post(
+        '/api/user/login/2fa',
+        { code: twoFactorCode },
+        { headers: { Cookie: cookie } },
+      );
+    } catch (err) {
+      throw gatewayError(getErrorMessage(err), 'GATEWAY_TWO_FACTOR_INVALID');
+    }
+    if (verification.data?.success === false) {
+      throw gatewayError(
+        verification.data?.message || 'Invalid SubRouter two-factor authentication code',
+        'GATEWAY_TWO_FACTOR_INVALID',
+      );
+    }
+    cookie = mergeCookies(cookie, buildCookie(verification.headers['set-cookie']));
+    data = verification.data;
+    const verifiedUser = extractUser(data);
+    if (verifiedUser.id != null || verifiedUser.username || verifiedUser.email) {
+      user = verifiedUser;
+    }
+  }
   if (!cookie) {
     throw new Error('Gateway site login succeeded but no session was returned');
   }
-  const user = extractUser(res.data);
   return {
     provider: SITE_PROVIDER,
     baseUrl: normalizeBaseUrl(baseUrl),
@@ -494,8 +627,8 @@ function pickDefaultModels(models) {
   return models.length > 0 ? models : DEFAULT_MODEL_FALLBACKS;
 }
 
-async function authenticateWithProvider(provider, username, password) {
-  const params = { ...provider, username, password, timeoutMs: 10000 };
+async function authenticateWithProvider(provider, username, password, options = {}) {
+  const params = { ...provider, ...options, username, password, timeoutMs: 10000 };
   if (provider.provider === SITE_PROVIDER) {
     return loginGatewaySite(params);
   }
@@ -515,16 +648,21 @@ async function ensureGatewayKey(account) {
   return ensureGatewayTokenKey(account);
 }
 
-async function authenticateGatewayAccount(username, password) {
+async function authenticateGatewayAccount(username, password, options) {
   let lastLoginError;
   let lastAccountError;
   const providers = getGatewayLoginProviders();
   for (const provider of providers) {
     let login;
     try {
-      login = await authenticateWithProvider(provider, username, password);
+      login = await authenticateWithProvider(provider, username, password, options);
     } catch (err) {
-      lastLoginError = err;
+      if (!lastLoginError || err?.code) {
+        lastLoginError = err;
+      }
+      if (String(err?.code || '').startsWith('GATEWAY_TWO_FACTOR_')) {
+        throw err;
+      }
       continue;
     }
 
@@ -546,12 +684,13 @@ async function authenticateGatewayAccount(username, password) {
   }
   if (lastLoginError) {
     logger.debug(`[GatewayAuth] External login failed: ${getErrorMessage(lastLoginError)}`);
+    throw lastLoginError;
   }
   return null;
 }
 
-async function authenticateGatewayUser(username, password) {
-  return authenticateGatewayAccount(username, password);
+async function authenticateGatewayUser(username, password, options) {
+  return authenticateGatewayAccount(username, password, options);
 }
 
 async function ensureLocalUser(account, password) {
@@ -632,12 +771,12 @@ async function syncGatewayEndpointKey(userId, account) {
   });
 }
 
-async function loginWithGateway(username, password) {
+async function loginWithGateway(username, password, options = {}) {
   if (!isGatewayLoginEnabled()) {
     return null;
   }
 
-  const login = await authenticateGatewayUser(username, password);
+  const login = await authenticateGatewayUser(username, password, options);
   if (!login) {
     return null;
   }

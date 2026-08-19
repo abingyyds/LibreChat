@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { TooltipAnchor } from '@librechat/client';
 import { getConfigDefaults } from 'librechat-data-provider';
 import type { ModelSelectorProps } from '~/common';
@@ -13,12 +13,14 @@ import { ModelSelectorChatProvider } from './ModelSelectorChatContext';
 import { getSelectedIcon, getDisplayValue } from './utils';
 import { CustomMenu as Menu } from './CustomMenu';
 import DialogManager from './DialogManager';
-import { useLocalize } from '~/hooks';
+import { useAuthContext, useLocalize } from '~/hooks';
+import { cn } from '~/utils';
 
 const defaultInterface = getConfigDefaults().interface;
 
 function ModelSelectorContent() {
   const localize = useLocalize();
+  const { user } = useAuthContext();
 
   const {
     // LibreChat
@@ -38,6 +40,15 @@ function ModelSelectorContent() {
     onOpenChange,
     keyDialogEndpoint,
   } = useModelSelectorContext();
+  const onboardingKey = user?.id ? `gateway-model-selected:${user.id}` : '';
+  const [showOnboarding] = useState(
+    () =>
+      user?.provider === 'gateway' &&
+      Boolean(onboardingKey) &&
+      localStorage.getItem(onboardingKey) !== 'true',
+  );
+  const needsModel =
+    user?.provider === 'gateway' && !selectedValues.model && !selectedValues.modelSpec;
 
   const selectedIcon = useMemo(
     () =>
@@ -67,7 +78,12 @@ function ModelSelectorContent() {
       description={localize('com_ui_select_model')}
       render={
         <button
-          className="my-1 flex h-9 w-full max-w-[70vw] items-center justify-center gap-2 rounded-xl border border-border-light bg-presentation px-3 py-2 text-sm text-text-primary hover:bg-surface-active-alt"
+          className={cn(
+            'my-1 flex h-9 w-full max-w-[70vw] items-center justify-center gap-2 rounded-xl border bg-presentation px-3 py-2 text-sm text-text-primary hover:bg-surface-active-alt',
+            needsModel
+              ? 'border-green-500 bg-green-500/10 font-semibold ring-2 ring-green-500/20'
+              : 'border-border-light',
+          )}
           aria-label={localize('com_ui_select_model')}
         >
           {selectedIcon && React.isValidElement(selectedIcon) && (
@@ -84,8 +100,12 @@ function ModelSelectorContent() {
   return (
     <div className="relative flex w-full max-w-md flex-col items-center gap-2">
       <Menu
+        defaultOpen={showOnboarding && needsModel}
         values={selectedValues}
         onValuesChange={(values: Record<string, any>) => {
+          if (onboardingKey && (values.model || values.modelSpec)) {
+            localStorage.setItem(onboardingKey, 'true');
+          }
           setSelectedValues({
             endpoint: values.endpoint || '',
             model: values.model || '',

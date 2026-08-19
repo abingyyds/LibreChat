@@ -96,7 +96,14 @@ const LoginForm: React.FC<TLoginFormProps> = ({ onSubmit, startupConfig, error, 
         className="mt-6"
         aria-label="Login form"
         method="POST"
-        onSubmit={handleSubmit((data) => onSubmit(data))}
+        onSubmit={handleSubmit((data) => {
+          const { twoFactorCode, ...credentials } = data;
+          onSubmit({
+            ...credentials,
+            ...(turnstileToken ? { turnstileToken } : {}),
+            ...(twoFactorCode?.trim() ? { twoFactorCode: twoFactorCode.trim() } : {}),
+          });
+        })}
       >
         <div className="mb-4">
           <div className="relative">
@@ -149,6 +156,25 @@ const LoginForm: React.FC<TLoginFormProps> = ({ onSubmit, startupConfig, error, 
           </div>
           {renderError('password')}
         </div>
+        {startupConfig.gatewayLoginEnabled && (
+          <div className="mb-2 mt-4">
+            <div className="relative">
+              <input
+                type="text"
+                id="twoFactorCode"
+                autoComplete="one-time-code"
+                inputMode="numeric"
+                aria-label={localize('com_auth_gateway_two_factor_optional')}
+                {...register('twoFactorCode')}
+                className={authInputClassName}
+                placeholder=" "
+              />
+              <label htmlFor="twoFactorCode" className={authLabelClassName}>
+                {localize('com_auth_gateway_two_factor_optional')}
+              </label>
+            </div>
+          </div>
+        )}
         {startupConfig.passwordResetEnabled && (
           <a
             href="/forgot-password"

@@ -134,6 +134,104 @@ describe('GatewayAuthService', () => {
     expect(updateUser).not.toHaveBeenCalled();
   });
 
+  it('forwards Turnstile and completes gateway two-factor authentication with merged cookies', async () => {
+    const client = {
+      post: jest.fn(async (path) => {
+        if (path === '/api/user/login') {
+          return {
+            headers: { 'set-cookie': ['session=pending; Path=/', 'guard=one; Path=/'] },
+            data: { success: true, data: { require_2fa: true } },
+          };
+        }
+        if (path === '/api/user/login/2fa') {
+          return {
+            headers: { 'set-cookie': ['session=verified; Path=/'] },
+            data: { success: true, data: { id: 123, username: 'alice' } },
+          };
+        }
+        throw new Error(`unexpected POST ${path}`);
+      }),
+      get: jest.fn(async (path) => {
+        if (path === '/api/user/self/distributor') {
+          return { data: { success: true, data: { belongs_to_distributor: false } } };
+        }
+        if (path === '/api/token/') {
+          return {
+            data: {
+              success: true,
+              data: [
+                {
+                  id: 1,
+                  name: 'librechat-auto-existing',
+                  key: 'abc123',
+                  group: 'subrouter',
+                  include_official_channels: true,
+                },
+              ],
+            },
+          };
+        }
+        throw new Error(`unexpected GET ${path}`);
+      }),
+    };
+    axios.create.mockReturnValue(client);
+    axios.get.mockResolvedValue({ data: { data: [{ id: 'gpt-4o-mini' }] } });
+    findUser.mockResolvedValue(null);
+    createUser.mockResolvedValue({
+      _id: { toString: () => 'local-user-id' },
+      provider: 'gateway',
+      role: 'USER',
+    });
+
+    const { loginWithGateway } = require('./GatewayAuthService');
+    await loginWithGateway('alice', 'password', {
+      turnstileToken: 'captcha-token',
+      twoFactorCode: '123456',
+    });
+
+    expect(client.post).toHaveBeenCalledWith(
+      '/api/user/login',
+      { username: 'alice', password: 'password' },
+      { params: { turnstile: 'captcha-token' } },
+    );
+    expect(client.post).toHaveBeenCalledWith(
+      '/api/user/login/2fa',
+      { code: '123456' },
+      { headers: { Cookie: 'session=pending; guard=one' } },
+    );
+    expect(client.get).toHaveBeenCalledWith('/api/user/self/distributor');
+    expect(axios.create).toHaveBeenCalledWith(
+      expect.objectContaining({ headers: expect.objectContaining({ Cookie: 'session=verified; guard=one' }) }),
+    );
+  });
+
+  it('reports when a gateway account requires two-factor authentication', async () => {
+    axios.create.mockReturnValue({
+      post: jest.fn(async () => ({
+        headers: { 'set-cookie': ['session=pending; Path=/'] },
+        data: { success: true, data: { require_2fa: true } },
+      })),
+    });
+
+    const { loginWithGateway } = require('./GatewayAuthService');
+    await expect(loginWithGateway('alice', 'password')).rejects.toMatchObject({
+      code: 'GATEWAY_TWO_FACTOR_REQUIRED',
+    });
+  });
+
+  it('preserves an actionable gateway login error message', async () => {
+    const upstreamError = new Error('Request failed with status code 401');
+    upstreamError.response = { data: { message: '用户名或密码错误' } };
+    axios.isAxiosError.mockReturnValueOnce(true);
+    axios.create.mockReturnValue({ post: jest.fn().mockRejectedValue(upstreamError) });
+
+    const { loginWithGateway } = require('./GatewayAuthService');
+    await expect(loginWithGateway('alice', 'wrong-password')).rejects.toMatchObject({
+      code: 'GATEWAY_LOGIN_FAILED',
+      message: '用户名或密码错误',
+    });
+  });
+
   it('downgrades existing gateway admins back to USER on login', async () => {
     mockGatewaySessionLogin();
     findUser.mockResolvedValue({

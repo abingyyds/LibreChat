@@ -482,6 +482,8 @@ export type TLoginUser = {
   password: string;
   token?: string;
   backupCode?: string;
+  turnstileToken?: string;
+  twoFactorCode?: string;
 };
 
 export type TLoginResponse = {
