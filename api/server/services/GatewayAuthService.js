@@ -199,13 +199,13 @@ async function loginGatewaySession({
   if (requiresTwoFactor(data)) {
     if (!twoFactorCode) {
       throw gatewayError(
-        'This SubRouter account requires a two-factor authentication code',
+        'This account requires a two-factor authentication code',
         'GATEWAY_TWO_FACTOR_REQUIRED',
       );
     }
     if (!cookie) {
       throw gatewayError(
-        'The SubRouter two-factor session expired. Please sign in again',
+        'The two-factor authentication session expired. Please sign in again',
         'GATEWAY_TWO_FACTOR_SESSION_EXPIRED',
       );
     }
@@ -221,7 +221,7 @@ async function loginGatewaySession({
     }
     if (verification.data?.success === false) {
       throw gatewayError(
-        verification.data?.message || 'Invalid SubRouter two-factor authentication code',
+        verification.data?.message || 'Invalid two-factor authentication code',
         'GATEWAY_TWO_FACTOR_INVALID',
       );
     }
@@ -277,13 +277,13 @@ async function loginGatewaySite({
   if (requiresTwoFactor(data)) {
     if (!twoFactorCode) {
       throw gatewayError(
-        'This SubRouter account requires a two-factor authentication code',
+        'This account requires a two-factor authentication code',
         'GATEWAY_TWO_FACTOR_REQUIRED',
       );
     }
     if (!cookie) {
       throw gatewayError(
-        'The SubRouter two-factor session expired. Please sign in again',
+        'The two-factor authentication session expired. Please sign in again',
         'GATEWAY_TWO_FACTOR_SESSION_EXPIRED',
       );
     }
@@ -299,7 +299,7 @@ async function loginGatewaySite({
     }
     if (verification.data?.success === false) {
       throw gatewayError(
-        verification.data?.message || 'Invalid SubRouter two-factor authentication code',
+        verification.data?.message || 'Invalid two-factor authentication code',
         'GATEWAY_TWO_FACTOR_INVALID',
       );
     }
